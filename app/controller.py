@@ -154,38 +154,57 @@ def write_nginx_vhosts(domains: list, proxy_pass: str) -> None:
     for _, names, _ in cert_groups:
         cert_domain_set.update(names)
 
-    # Compute missing apexes (apex domains that have names in input but no cert yet)
-    # Missing means no prod cert and no staging cert
-    missing_apexes = []
+    # Print certbot commands.
+    # - Always print a STAGING command if <apex>-staging is missing (even if <apex> exists).
+    # - Print a PROD command if <apex> is missing.
+    stage_needed = []
+    prod_needed = []
     for apex, names in groups.items():
         if not names:
             continue
-        prod_exists = cert_exists(apex)
-        staging_exists = cert_exists(apex + STAGING_SUFFIX)
-        if not prod_exists and not staging_exists:
-            missing_apexes.append(apex)
+        if not cert_exists(apex + STAGING_SUFFIX):
+            stage_needed.append(apex)
+        if not cert_exists(apex):
+            prod_needed.append(apex)
 
-    if AUTO_PRINT_CERTBOT_CMD and missing_apexes:
-        for apex in missing_apexes:
-            staging_cert_name = apex + STAGING_SUFFIX
+    printed_any = False
+    if AUTO_PRINT_CERTBOT_CMD and (stage_needed or prod_needed):
+        # Keep stable order by iterating in the original groups insertion order
+        for apex in groups.keys():
+            if apex not in groups or not groups[apex]:
+                continue
             domains_args = " ".join(f"-d {name}" for name in groups[apex])
-            staging_cmd = (
-                f"docker compose run --rm --entrypoint certbot certbot certonly "
-                f"--webroot -w /var/www/certbot --email {CERTBOT_EMAIL} --agree-tos "
-                f"--no-eff-email --cert-name {staging_cert_name} {domains_args}"
+
+            if apex in stage_needed:
+                staging_cert_name = apex + STAGING_SUFFIX
+                staging_cmd = (
+                    f"docker compose run --rm --entrypoint certbot certbot certonly "
+                    f"--webroot -w /var/www/certbot --staging --email {CERTBOT_EMAIL} --agree-tos "
+                    f"--no-eff-email --cert-name {staging_cert_name} {domains_args}"
+                )
+                if AUTO_PRINT_STAGE_FIRST:
+                    print(f"[STAGING] Certbot command for {apex}: {staging_cmd}", flush=True)
+                else:
+                    print(f"Certbot command for {apex} (staging): {staging_cmd}", flush=True)
+                printed_any = True
+
+            if apex in prod_needed:
+                prod_cmd = (
+                    f"docker compose run --rm --entrypoint certbot certbot certonly "
+                    f"--webroot -w /var/www/certbot --email {CERTBOT_EMAIL} --agree-tos "
+                    f"--no-eff-email --cert-name {apex} {domains_args}"
+                )
+                if AUTO_PRINT_STAGE_FIRST:
+                    print(f"[PROD]    Certbot command for {apex}: {prod_cmd}", flush=True)
+                else:
+                    print(f"Certbot command for {apex} (prod): {prod_cmd}", flush=True)
+                printed_any = True
+
+        if printed_any:
+            print(
+                "After certbot succeeds, run 'docker compose exec nginx nginx -s reload' or restart controller to apply new certs.",
+                flush=True,
             )
-            prod_cmd = (
-                f"docker compose run --rm --entrypoint certbot certbot certonly "
-                f"--webroot -w /var/www/certbot --email {CERTBOT_EMAIL} --agree-tos "
-                f"--no-eff-email --cert-name {apex} {domains_args}"
-            )
-            if AUTO_PRINT_STAGE_FIRST:
-                print(f"[STAGING] Certbot command for {apex}: {staging_cmd}", flush=True)
-                print(f"[PROD]    Certbot command for {apex}: {prod_cmd}", flush=True)
-            else:
-                print(f"Certbot command for {apex} (staging): {staging_cmd}", flush=True)
-                print(f"Certbot command for {apex} (prod): {prod_cmd}", flush=True)
-        print("After certbot succeeds, run 'docker compose exec nginx nginx -s reload' or restart controller to apply new certs.", flush=True)
 
     # HTTPS + redirect servers for cert-backed groups
     https_lines = []
