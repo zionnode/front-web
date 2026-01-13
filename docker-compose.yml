@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   nginx:
     image: nginx:1.25-alpine
@@ -41,9 +39,7 @@ services:
     container_name: front_controller
     restart: unless-stopped
     volumes:
-      # 你编辑的输入文件
-      - ./domain.list:/app/domain.list:ro
-      - ./proxy_pass:/app/proxy_pass:ro
+      - ./app:/app/app:ro
 
       # controller 生成 nginx 配置的输出目录
       - ./data/nginx/sites:/app/nginx-sites
@@ -52,4 +48,4 @@ services:
       - ./data/certbot/www:/var/www/certbot
       - ./data/certbot/conf:/etc/letsencrypt
     working_dir: /app
-    command: ["python", "controller.py"]
+    command: ["python", "/app/app/controller.py"]
