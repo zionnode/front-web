@@ -183,6 +183,7 @@ PUB4="$(get_public_ipv4)"
 log "Public IPv4: ${PUB4:-<empty>}"
 
 log "Processing domain groups..."
+log "Loaded domains: ${DOMAINS[*]}"
 GROUPS=()
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
@@ -194,19 +195,27 @@ if [[ ${#GROUPS[@]} -eq 0 ]]; then
   exit 1
 fi
 
+log "Group count: ${#GROUPS[@]}"
+
 if [[ "${DEBUG:-0}" == "1" ]]; then
   log "DEBUG groups: ${GROUPS[*]}"
 fi
 
 for line in "${GROUPS[@]}"; do
+  log "---- group raw: [$line]"
   apex="${line%%|*}"
   names_str="${line#*|}"
   # shellcheck disable=SC2206
   names=($names_str)
+  log "apex=[$apex] names_str=[$names_str] names_count=${#names[@]}"
+  log "names=(${names[*]})"
 
   # DNS A 检查（避免申请失败）
   if [[ "$CHECK_A_RECORD" == "1" ]]; then
-    a="$(get_domain_a "$apex")"
+    # Raw resolver output for debugging
+    getent_out="$(getent hosts "$apex" 2>/dev/null || true)"
+    a="$(echo "$getent_out" | awk '{print $1}' | head -n1 || true)"
+    log "DNS check apex=[$apex] getent_hosts=[$getent_out] chosen_A=[$a] public_ipv4=[$PUB4]"
     if [[ -z "$a" || -z "$PUB4" || "$a" != "$PUB4" ]]; then
       log "SKIP $apex: A record($a) != PublicIPv4($PUB4)"
       continue
