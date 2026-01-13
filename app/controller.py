@@ -9,6 +9,9 @@ NGINX_HTTPS_CONF = "10-front-web-https.conf"
 LE_LIVE_DIR = "/etc/letsencrypt/live"
 LEGACY_HTTP_CONF = "00-front-web-http.conf"
 
+AUTO_PRINT_CERTBOT_CMD = os.environ.get("AUTO_PRINT_CERTBOT_CMD", "1") == "1"
+CERTBOT_EMAIL = os.environ.get("CERTBOT_EMAIL", "wzhang@zionladder.com")
+
 
 def _first_existing_file(paths) -> Optional[str]:
     for p in paths:
@@ -134,6 +137,21 @@ def write_nginx_vhosts(domains: list, proxy_pass: str) -> None:
     cert_domain_set = set()
     for _, names in cert_groups:
         cert_domain_set.update(names)
+
+    # Compute missing apexes (apex domains that have names in input but no cert yet)
+    missing_apexes = [apex for apex, names in groups.items() if names and not has_cert(apex)]
+
+    if AUTO_PRINT_CERTBOT_CMD and missing_apexes:
+        for apex in missing_apexes:
+            names = groups[apex]
+            domains_args = " ".join(f"-d {name}" for name in names)
+            cmd = (
+                f"docker compose run --rm --entrypoint certbot certbot certonly "
+                f"--webroot -w /var/www/certbot --email {CERTBOT_EMAIL} --agree-tos "
+                f"--no-eff-email --cert-name {apex} {domains_args}"
+            )
+            print(f"Certbot command for {apex}: {cmd}", flush=True)
+        print("After certbot succeeds, run 'docker compose exec nginx nginx -s reload' or restart controller to apply new certs.", flush=True)
 
     # HTTPS + redirect servers for cert-backed groups
     https_lines = []
