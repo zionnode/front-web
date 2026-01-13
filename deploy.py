@@ -151,6 +151,8 @@ def main():
     check_a = os.environ.get("CHECK_A_RECORD", "1") == "1"
     check_aaaa = os.environ.get("CHECK_AAAA_RECORD", "0") == "1"  # 先不实现 AAAA 逻辑也行
 
+    need_nginx_restart = False
+
     ensure_dirs()
 
     if not PROXY_FILE.exists():
@@ -192,14 +194,23 @@ def main():
                 sh(certbot_cmd(staging_name, names, staging=True, email=email, force=False), check=True)
 
         if do_prod:
-            log(f"[PROD] Requesting cert: {prod_name} ({' '.join(names)})")
-            sh(certbot_cmd(prod_name, names, staging=False, email=email, force=force_prod), check=True)
+            if cert_exists(prod_name) and not force_prod:
+                log(f"[PROD] skip {prod_name} (exists)")
+            else:
+                log(f"[PROD] Requesting cert: {prod_name} ({' '.join(names)})")
+                sh(certbot_cmd(prod_name, names, staging=False, email=email, force=force_prod), check=True)
+                # New prod cert may introduce first-time 443 listener → require full restart
+                need_nginx_restart = True
         else:
             log(f"[PROD] skip {prod_name} (DO_PROD=0)")
 
-    log("Reloading nginx...")
-    sh(["docker", "compose", "exec", "nginx", "nginx", "-t"], check=True)
-    sh(["docker", "compose", "exec", "nginx", "nginx", "-s", "reload"], check=True)
+    if need_nginx_restart:
+        log("Restarting nginx container (first-time HTTPS or prod cert change)...")
+        sh(["docker", "compose", "restart", "nginx"], check=True)
+    else:
+        log("Reloading nginx...")
+        sh(["docker", "compose", "exec", "nginx", "nginx", "-t"], check=True)
+        sh(["docker", "compose", "exec", "nginx", "nginx", "-s", "reload"], check=True)
 
     log("Done.")
 

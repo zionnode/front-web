@@ -49,3 +49,20 @@ services:
       - ./data/certbot/conf:/etc/letsencrypt
     working_dir: /app
     command: ["python", "/app/app/controller.py"]
+
+  logrotate:
+    image: alpine:3.20
+    container_name: front_logrotate
+    restart: unless-stopped
+    volumes:
+      # 读取 nginx 日志目录（宿主机 data/nginx/logs）
+      - ./data/nginx/logs:/data/nginx/logs
+
+      # 读取 logrotate 配置目录（你会把 nginx.conf 放在这里）
+      - ./data/nginx/logrotate:/etc/logrotate.d
+    command: >
+      sh -c "
+        apk add --no-cache logrotate &&
+        echo '0 * * * * logrotate -v /etc/logrotate.d/nginx.conf' > /etc/crontabs/root &&
+        crond -f -l 8
+      "
