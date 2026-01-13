@@ -15,22 +15,11 @@ DOMAIN_FILE="./app/domain.list"
 PROXY_FILE="./app/proxy_pass"
 
 # ====== 可通过 .env 覆盖 ======
-# CERTBOT_EMAIL 在 .env 里配置最合适
 CERTBOT_EMAIL="${CERTBOT_EMAIL:-wzhang@zionladder.com}"
-
-# 1=先跑 staging（推荐），0=不跑
 DO_STAGING="${DO_STAGING:-1}"
-
-# 1=跑 production，0=不跑（默认建议 0，等你确认 staging 完整没问题再开）
 DO_PROD="${DO_PROD:-0}"
-
-# 1=prod 强制重签（可能触发限流），0=prod 默认 keep-until-expiring（推荐）
 FORCE_PROD="${FORCE_PROD:-0}"
-
-# 1=只有当域名 A 记录指向本机才处理，0=不检查
 CHECK_A_RECORD="${CHECK_A_RECORD:-1}"
-
-# 你现在建议先不配 AAAA，所以默认不检查 AAAA
 CHECK_AAAA_RECORD="${CHECK_AAAA_RECORD:-0}"
 
 STAGING_SUFFIX="-staging"
@@ -45,28 +34,20 @@ require_file() {
   fi
 }
 
-# 获取本机公网 IPv4
 get_public_ipv4() {
   curl -4 -s https://ifconfig.me || true
 }
 
-# 获取域名 A 记录（取第一个）
-get_domain_a() {
-  local d="$1"
-  getent hosts "$d" 2>/dev/null | awk '{print $1}' | head -n1 || true
-}
-
-# 获取域名 AAAA（可选）
 get_domain_aaaa() {
   local d="$1"
   getent ahosts "$d" 2>/dev/null | awk '{print $1}' | grep -E ':' | head -n1 || true
 }
 
-# 读取 domain.list，生成去重后的域名数组（保持顺序）
 read_domains() {
   mapfile -t raw < <(grep -vE '^\s*($|#)' "$DOMAIN_FILE" | tr -d '\r')
   local -a out=()
   local seen=""
+  local d
   for d in "${raw[@]}"; do
     d="$(echo "$d" | xargs)"
     [[ -z "$d" ]] && continue
@@ -80,29 +61,28 @@ read_domains() {
 
 # 按 apex 分组（apex + www）
 # 输出：每行 "apex|name1 name2"
+# 规则：apex=去掉前缀 www.；同一组内只保留 domain.list 中出现过的条目（apex 和 www 都可）
 group_domains() {
   local -a domains=("$@")
-  local set="|"
-  for d in "${domains[@]}"; do set+="$d|"; done
 
-  local -A groups=()
+  # key: apex, value: space-separated names
+  local -A apex_names=()
+
+  local d apex cur
   for d in "${domains[@]}"; do
-    local apex="$d"
+    apex="$d"
     [[ "$d" == www.* ]] && apex="${d#www.}"
-    groups["$apex"]=1
+
+    cur="${apex_names[$apex]:-}"
+    if [[ " $cur " != *" $d "* ]]; then
+      apex_names[$apex]="${cur}${cur:+ }$d"
+    fi
   done
 
-  for apex in "${!groups[@]}"; do
-    local names=()
-    if [[ "$set" == *"|$apex|"* ]]; then names+=("$apex"); fi
-    local www="www.$apex"
-    if [[ "$set" == *"|$www|"* ]]; then names+=("$www"); fi
-    # 若只有 www 没有 apex
-    if [[ ${#names[@]} -eq 0 && "$set" == *"|www.$apex|"* ]]; then
-      names+=("www.$apex")
-    fi
-    echo "$apex|${names[*]}"
-  done | sort
+  while IFS= read -r apex; do
+    [[ -z "$apex" ]] && continue
+    printf '%s|%s\n' "$apex" "${apex_names[$apex]}"
+  done < <(printf '%s\n' "${!apex_names[@]}" | sort)
 }
 
 cert_exists() {
@@ -184,6 +164,7 @@ log "Public IPv4: ${PUB4:-<empty>}"
 
 log "Processing domain groups..."
 log "Loaded domains: ${DOMAINS[*]}"
+
 GROUPS=()
 while IFS= read -r line; do
   [[ -z "$line" ]] && continue
@@ -212,7 +193,6 @@ for line in "${GROUPS[@]}"; do
 
   # DNS A 检查（避免申请失败）
   if [[ "$CHECK_A_RECORD" == "1" ]]; then
-    # Raw resolver output for debugging
     getent_out="$(getent hosts "$apex" 2>/dev/null || true)"
     a="$(echo "$getent_out" | awk '{print $1}' | head -n1 || true)"
     log "DNS check apex=[$apex] getent_hosts=[$getent_out] chosen_A=[$a] public_ipv4=[$PUB4]"
@@ -233,19 +213,18 @@ for line in "${GROUPS[@]}"; do
   staging_name="${apex}${STAGING_SUFFIX}"
   prod_name="${apex}"
 
-  # staging：没有就申请
   if [[ "$DO_STAGING" == "1" ]] && ! cert_exists "$staging_name"; then
     run_certbot_staging "$staging_name" "${names[@]}"
   else
     log "[STAGING] skip $staging_name (exists or disabled)"
   fi
 
-  # prod：按开关决定是否申请
   if [[ "$DO_PROD" == "1" ]]; then
     run_certbot_prod "$prod_name" "${names[@]}"
   else
     log "[PROD] skip $prod_name (DO_PROD=0)"
   fi
+
 done
 
 log "Reloading nginx..."
