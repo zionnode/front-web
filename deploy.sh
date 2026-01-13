@@ -171,7 +171,16 @@ PUB4="$(get_public_ipv4)"
 log "Public IPv4: ${PUB4:-<empty>}"
 
 log "Processing domain groups..."
-mapfile -t GROUPS < <(group_domains "${DOMAINS[@]}")
+GROUPS=()
+while IFS= read -r line; do
+  [[ -z "$line" ]] && continue
+  GROUPS+=("$line")
+done < <(group_domains "${DOMAINS[@]}")
+
+if [[ ${#GROUPS[@]} -eq 0 ]]; then
+  echo "No domain groups produced (check app/domain.list formatting)." >&2
+  exit 1
+fi
 
 for line in "${GROUPS[@]}"; do
   apex="${line%%|*}"
