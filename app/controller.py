@@ -7,6 +7,7 @@ NGINX_SITES_DIR = "/app/nginx-sites"
 NGINX_HTTP_FALLBACK_CONF = "00-front-web-http-fallback.conf"
 NGINX_HTTPS_CONF = "10-front-web-https.conf"
 LE_LIVE_DIR = "/etc/letsencrypt/live"
+LEGACY_HTTP_CONF = "00-front-web-http.conf"
 
 
 def _first_existing_file(paths) -> Optional[str]:
@@ -95,6 +96,14 @@ def write_nginx_vhosts(domains: list, proxy_pass: str) -> None:
     without breaking nginx for other domains.
     """
     os.makedirs(NGINX_SITES_DIR, exist_ok=True)
+
+    # Clean up legacy single-file HTTP config to avoid server_name conflicts
+    legacy_path = os.path.join(NGINX_SITES_DIR, LEGACY_HTTP_CONF)
+    try:
+        if os.path.isfile(legacy_path):
+            os.remove(legacy_path)
+    except Exception as e:
+        print(f"WARN: failed to remove legacy nginx conf {legacy_path}: {e!r}")
 
     # Build groups keyed by apex
     input_set = set(domains)
