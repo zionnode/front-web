@@ -66,3 +66,24 @@ services:
         echo '0 * * * * logrotate -v /etc/logrotate.d/nginx.conf' > /etc/crontabs/root &&
         crond -f -l 8
       "
+
+  renewer:
+    image: docker:cli
+    container_name: front_renewer
+    restart: unless-stopped
+    volumes:
+      # 允许在容器内调用 docker exec 到 front_certbot / front_nginx
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: >
+      sh -c "
+        echo '[renewer] starting...';
+        while :; do
+          echo '[renewer] running certbot renew...';
+          # 只会续期接近到期的证书，不会每次都重新申请
+          docker exec front_certbot certbot renew --webroot -w /var/www/certbot || true;
+          echo '[renewer] reloading nginx...';
+          docker exec front_nginx nginx -t && docker exec front_nginx nginx -s reload || true;
+          echo '[renewer] sleep 12h';
+          sleep 43200;
+        done
+      "
