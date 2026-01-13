@@ -3,6 +3,14 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
+# Auto-load .env (Compose loads it automatically, bash does not)
+if [[ -f ./.env ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source ./.env
+  set +a
+fi
+
 DOMAIN_FILE="./app/domain.list"
 PROXY_FILE="./app/proxy_pass"
 
@@ -108,6 +116,8 @@ run_certbot_staging() {
   log "[STAGING] Requesting cert: $certname (${names[*]})"
   docker compose run --rm --entrypoint certbot certbot certonly \
     --webroot -w /var/www/certbot \
+    --non-interactive \
+    --preferred-challenges http \
     --staging \
     --email "$CERTBOT_EMAIL" \
     --agree-tos --no-eff-email \
@@ -125,6 +135,8 @@ run_certbot_prod() {
   fi
   docker compose run --rm --entrypoint certbot certbot certonly \
     --webroot -w /var/www/certbot \
+    --non-interactive \
+    --preferred-challenges http \
     --email "$CERTBOT_EMAIL" \
     --agree-tos --no-eff-email \
     --cert-name "$certname" \
@@ -133,6 +145,10 @@ run_certbot_prod() {
 }
 
 # ====== main ======
+
+# Ensure bind-mount directories exist (fresh clone)
+mkdir -p ./data/nginx/sites ./data/nginx/logs ./data/certbot/www ./data/certbot/conf
+
 require_file "$DOMAIN_FILE"
 require_file "$PROXY_FILE"
 
@@ -184,7 +200,7 @@ for line in "${GROUPS[@]}"; do
   prod_name="${apex}"
 
   # staging：没有就申请
-  if [[ "$DO_STAGING" == "1" && ! $(cert_exists "$staging_name" && echo true || echo false) ]]; then
+  if [[ "$DO_STAGING" == "1" ]] && ! cert_exists "$staging_name"; then
     run_certbot_staging "$staging_name" "${names[@]}"
   else
     log "[STAGING] skip $staging_name (exists or disabled)"
