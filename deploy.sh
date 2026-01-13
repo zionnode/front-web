@@ -162,8 +162,20 @@ if ! docker compose port nginx 80 >/dev/null 2>&1; then
 fi
 
 mapfile -t DOMAINS < <(read_domains)
+
+# Validate domain entries (must look like a hostname and contain at least one dot)
+DOMAINS_VALID=()
+for d in "${DOMAINS[@]}"; do
+  if [[ "$d" == *.* ]] && [[ "$d" =~ ^[A-Za-z0-9][A-Za-z0-9.-]*[A-Za-z0-9]$ ]]; then
+    DOMAINS_VALID+=("$d")
+  else
+    log "WARN invalid domain entry skipped: $d"
+  fi
+done
+DOMAINS=("${DOMAINS_VALID[@]}")
+
 if [[ ${#DOMAINS[@]} -eq 0 ]]; then
-  echo "domain.list is empty" >&2
+  echo "domain.list has no valid domains" >&2
   exit 1
 fi
 
@@ -180,6 +192,10 @@ done < <(group_domains "${DOMAINS[@]}")
 if [[ ${#GROUPS[@]} -eq 0 ]]; then
   echo "No domain groups produced (check app/domain.list formatting)." >&2
   exit 1
+fi
+
+if [[ "${DEBUG:-0}" == "1" ]]; then
+  log "DEBUG groups: ${GROUPS[*]}"
 fi
 
 for line in "${GROUPS[@]}"; do
