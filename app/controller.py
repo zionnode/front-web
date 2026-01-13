@@ -3,6 +3,9 @@ import sys
 import time
 from typing import Optional, Tuple
 
+NGINX_SITES_DIR = "/app/nginx-sites"
+NGINX_HTTP_CONF = "00-front-web-http.conf"
+
 
 def _first_existing_file(paths) -> Optional[str]:
     for p in paths:
@@ -79,6 +82,44 @@ def load_configs() -> Tuple[list, str, str, str]:
     return domains, proxy_pass, domain_path, proxy_path
 
 
+def write_http_vhost(domains: list, proxy_pass: str) -> None:
+    """Write a minimal HTTP(80) nginx vhost that proxies to proxy_pass.
+
+    This is MVP (no HTTPS yet). We keep the ACME challenge location so certbot
+    can be added later without changing the http server block.
+    """
+    os.makedirs(NGINX_SITES_DIR, exist_ok=True)
+
+    # Keep server_name exactly as the user's input order.
+    server_names = " ".join(domains)
+    conf_path = os.path.join(NGINX_SITES_DIR, NGINX_HTTP_CONF)
+
+    conf = f"""server {{
+    listen 80;
+    server_name {server_names};
+
+    location /.well-known/acme-challenge/ {{
+        root /var/www/certbot;
+    }}
+
+    location / {{
+        proxy_pass {proxy_pass};
+        proxy_read_timeout    90;
+        proxy_connect_timeout 90;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_http_version 1.1;
+    }}
+}}
+"""
+
+    tmp = conf_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(conf)
+    os.replace(tmp, conf_path)
+
+
 def mtime(path: str) -> float:
     try:
         return os.path.getmtime(path)
@@ -87,7 +128,7 @@ def mtime(path: str) -> float:
 
 
 def main() -> None:
-    print("front-web controller starting...")
+    print("front-web controller starting...", flush=True)
 
     domains, proxy_pass, domain_path, proxy_path = load_configs()
     last_domain_mtime = mtime(domain_path)
@@ -97,6 +138,9 @@ def main() -> None:
     print(f"Loaded proxy_pass from:  {proxy_path}")
     print(f"Active domains ({len(domains)}): {', '.join(domains)}")
     print(f"proxy_pass: {proxy_pass}")
+
+    write_http_vhost(domains, proxy_pass)
+    print("Wrote nginx http vhost to /app/nginx-sites/00-front-web-http.conf (reload nginx to apply).", flush=True)
 
     # MVP: just stay alive and re-read configs when they change.
     # (Next steps will generate nginx vhosts and reload nginx.)
@@ -112,6 +156,8 @@ def main() -> None:
                 print("Config changed; reloaded:")
                 print(f"  domains ({len(domains)}): {', '.join(domains)}")
                 print(f"  proxy_pass: {proxy_pass}")
+                write_http_vhost(domains, proxy_pass)
+                print("Wrote nginx http vhost to /app/nginx-sites/00-front-web-http.conf (reload nginx to apply).", flush=True)
                 last_domain_mtime = new_domain_mtime
                 last_proxy_mtime = new_proxy_mtime
             except SystemExit:
